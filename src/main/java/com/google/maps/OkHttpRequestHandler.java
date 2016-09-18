@@ -19,9 +19,9 @@ import com.google.gson.FieldNamingPolicy;
 import com.google.maps.internal.ApiResponse;
 import com.google.maps.internal.OkHttpPendingResult;
 import com.google.maps.internal.RateLimitExecutorService;
-import com.squareup.okhttp.Dispatcher;
-import com.squareup.okhttp.OkHttpClient;
-import com.squareup.okhttp.Request;
+import okhttp3.Dispatcher;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
 
 import java.net.Proxy;
 import java.util.concurrent.TimeUnit;
@@ -38,12 +38,14 @@ import java.util.logging.Logger;
 public class OkHttpRequestHandler implements GeoApiContext.RequestHandler {
   private static final Logger LOG = Logger.getLogger(OkHttpRequestHandler.class.getName());
 
-  private final OkHttpClient client = new OkHttpClient();
+  private final OkHttpClient client;
   private final RateLimitExecutorService rateLimitExecutorService;
 
   public OkHttpRequestHandler() {
     rateLimitExecutorService = new RateLimitExecutorService();
-    client.setDispatcher(new Dispatcher(rateLimitExecutorService));
+    client = new OkHttpClient.Builder()
+            .dispatcher(new Dispatcher(rateLimitExecutorService))
+            .build();
   }
 
   @Override
@@ -60,17 +62,17 @@ public class OkHttpRequestHandler implements GeoApiContext.RequestHandler {
 
   @Override
   public void setConnectTimeout(long timeout, TimeUnit unit) {
-    client.setConnectTimeout(timeout, unit);
+//    client.setConnectTimeout(timeout, unit);
   }
 
   @Override
   public void setReadTimeout(long timeout, TimeUnit unit) {
-    client.setReadTimeout(timeout, unit);
+//    client.setReadTimeout(timeout, unit);
   }
 
   @Override
   public void setWriteTimeout(long timeout, TimeUnit unit) {
-    client.setWriteTimeout(timeout, unit);
+//    client.setWriteTimeout(timeout, unit);
   }
 
   @Override
@@ -85,7 +87,7 @@ public class OkHttpRequestHandler implements GeoApiContext.RequestHandler {
 
   @Override
   public void setProxy(Proxy proxy) {
-    client.setProxy(proxy);
+//    client.setProxy(proxy);
   }
 
 }
