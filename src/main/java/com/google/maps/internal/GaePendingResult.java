@@ -23,6 +23,7 @@ import com.google.gson.FieldNamingPolicy;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonSyntaxException;
+import com.google.maps.GeolocationApi;
 import com.google.maps.PendingResult;
 import com.google.maps.PhotoRequest;
 import com.google.maps.errors.ApiException;
@@ -39,6 +40,7 @@ import com.google.maps.model.PhotoResult;
 import com.google.maps.model.PlaceDetails.Review.AspectRating.RatingType;
 import com.google.maps.model.PriceLevel;
 import com.google.maps.model.TravelMode;
+import com.squareup.okhttp.Response;
 import org.joda.time.DateTime;
 import org.joda.time.Instant;
 import org.joda.time.LocalTime;
@@ -63,6 +65,8 @@ public class GaePendingResult<T, R extends ApiResponse<T>>
   private final URLFetchService client;
   private final Class<R> responseClass;
   private final FieldNamingPolicy fieldNamingPolicy;
+  private final Integer maxRetries;
+  private final ExceptionsAllowedToRetry exceptionsAllowedToRetry;
 
   private Callback<T> callback;
   private long errorTimeOut;
@@ -79,14 +83,18 @@ public class GaePendingResult<T, R extends ApiResponse<T>>
    * @param responseClass     Model class to unmarshal JSON body content.
    * @param fieldNamingPolicy FieldNamingPolicy for unmarshaling JSON.
    * @param errorTimeOut      Number of milliseconds to re-send erroring requests.
+   * @param maxRetries        Number of times allowed to re-send erroring requests.
    */
   public GaePendingResult(HTTPRequest request, URLFetchService client, Class<R> responseClass,
-                          FieldNamingPolicy fieldNamingPolicy, long errorTimeOut) {
+                          FieldNamingPolicy fieldNamingPolicy, long errorTimeOut, Integer maxRetries,
+                          ExceptionsAllowedToRetry exceptionsAllowedToRetry) {
     this.request = request;
     this.client = client;
     this.responseClass = responseClass;
     this.fieldNamingPolicy = fieldNamingPolicy;
     this.errorTimeOut = errorTimeOut;
+    this.maxRetries = maxRetries;
+    this.exceptionsAllowedToRetry = exceptionsAllowedToRetry;
 
     this.call = client.fetchAsync(request);
   }
@@ -123,7 +131,7 @@ public class GaePendingResult<T, R extends ApiResponse<T>>
 
   @SuppressWarnings("unchecked")
   private T parseResponse(GaePendingResult<T, R> request, HTTPResponse response) throws Exception {
-    if (RETRY_ERROR_CODES.contains(response.getResponseCode()) && cumulativeSleepTime < errorTimeOut) {
+    if (shouldRetry(response)) {
       // Retry is a blocking method, but that's OK. If we're here, we're either in an await()
       // call, which is blocking anyway, or we're handling a callback in a separate thread.
       return request.retry();
@@ -167,6 +175,7 @@ public class GaePendingResult<T, R extends ApiResponse<T>>
         .registerTypeAdapter(PriceLevel.class, new PriceLevelAdaptor())
         .registerTypeAdapter(Instant.class, new InstantAdapter())
         .registerTypeAdapter(LocalTime.class, new LocalTimeAdapter())
+        .registerTypeAdapter(GeolocationApi.Response.class, new GeolocationResponseAdapter())
         .setFieldNamingPolicy(fieldNamingPolicy)
         .create();
 
@@ -193,7 +202,7 @@ public class GaePendingResult<T, R extends ApiResponse<T>>
       return resp.getResult();
     } else {
       ApiException e = resp.getError();
-      if (e instanceof OverQueryLimitException && cumulativeSleepTime < errorTimeOut) {
+      if (shouldRetry(e)) {
         // Retry over_query_limit errors
         return request.retry();
       } else {
@@ -208,5 +217,17 @@ public class GaePendingResult<T, R extends ApiResponse<T>>
     LOG.info("Retrying request. Retry #" + retryCounter);
     this.call = client.fetchAsync(request);
     return this.await();
+  }
+
+  private boolean shouldRetry(HTTPResponse response) {
+    return RETRY_ERROR_CODES.contains(response.getResponseCode())
+        && cumulativeSleepTime < errorTimeOut
+        && (maxRetries == null || retryCounter < maxRetries);
+  }
+
+  private boolean shouldRetry(ApiException exception) {
+    return exceptionsAllowedToRetry.contains(exception.getClass())
+        && cumulativeSleepTime < errorTimeOut
+        && (maxRetries == null || retryCounter < maxRetries);
   }
 }

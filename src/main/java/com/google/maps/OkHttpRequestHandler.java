@@ -17,11 +17,14 @@ package com.google.maps;
 
 import com.google.gson.FieldNamingPolicy;
 import com.google.maps.internal.ApiResponse;
+import com.google.maps.internal.ExceptionsAllowedToRetry;
 import com.google.maps.internal.OkHttpPendingResult;
 import com.google.maps.internal.RateLimitExecutorService;
 import com.squareup.okhttp.Dispatcher;
+import com.squareup.okhttp.MediaType;
 import com.squareup.okhttp.OkHttpClient;
 import com.squareup.okhttp.Request;
+import com.squareup.okhttp.RequestBody;
 
 import java.net.Proxy;
 import java.util.concurrent.TimeUnit;
@@ -37,6 +40,7 @@ import java.util.logging.Logger;
  */
 public class OkHttpRequestHandler implements GeoApiContext.RequestHandler {
   private static final Logger LOG = Logger.getLogger(OkHttpRequestHandler.class.getName());
+  private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
   private final OkHttpClient client = new OkHttpClient();
   private final RateLimitExecutorService rateLimitExecutorService;
@@ -47,7 +51,10 @@ public class OkHttpRequestHandler implements GeoApiContext.RequestHandler {
   }
 
   @Override
-  public <T, R extends ApiResponse<T>> PendingResult<T> handle(String hostName, String url, String userAgent, Class<R> clazz, FieldNamingPolicy fieldNamingPolicy, long errorTimeout) {
+  public <T, R extends ApiResponse<T>> PendingResult<T> handle(String hostName, String url, String userAgent,
+                                                               Class<R> clazz, FieldNamingPolicy fieldNamingPolicy,
+                                                               long errorTimeout, Integer maxRetries,
+                                                               ExceptionsAllowedToRetry exceptionsAllowedToRetry) {
     Request req = new Request.Builder()
         .get()
         .header("User-Agent", userAgent)
@@ -55,7 +62,22 @@ public class OkHttpRequestHandler implements GeoApiContext.RequestHandler {
 
     LOG.log(Level.INFO, "Request: {0}", hostName + url);
 
-    return new OkHttpPendingResult<T, R>(req, client, clazz, fieldNamingPolicy, errorTimeout);
+    return new OkHttpPendingResult<T, R>(req, client, clazz, fieldNamingPolicy, errorTimeout, maxRetries, exceptionsAllowedToRetry);
+  }
+
+  @Override
+  public <T, R extends ApiResponse<T>> PendingResult<T> handlePost(String hostName, String url, String payload,
+                                                                   String userAgent, Class<R> clazz,
+                                                                   FieldNamingPolicy fieldNamingPolicy,
+                                                                   long errorTimeout, Integer maxRetries,
+                                                                   ExceptionsAllowedToRetry exceptionsAllowedToRetry) {
+    RequestBody body = RequestBody.create(JSON, payload);
+    Request req = new Request.Builder()
+        .post(body)
+        .header("User-Agent", userAgent)
+        .url(hostName + url).build();
+
+    return new OkHttpPendingResult<T, R>(req, client, clazz, fieldNamingPolicy, errorTimeout, maxRetries, exceptionsAllowedToRetry);
   }
 
   @Override

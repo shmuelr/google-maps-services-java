@@ -16,10 +16,15 @@
 package com.google.maps;
 
 import com.google.gson.FieldNamingPolicy;
+import com.google.gson.Gson;
+import com.google.maps.errors.ApiException;
+import com.google.maps.errors.OverQueryLimitException;
 import com.google.maps.internal.ApiConfig;
 import com.google.maps.internal.ApiResponse;
 import com.google.maps.internal.ExceptionResult;
+import com.google.maps.internal.ExceptionsAllowedToRetry;
 import com.google.maps.internal.UrlSigner;
+import com.google.maps.model.GeolocationPayload;
 
 import java.io.UnsupportedEncodingException;
 import java.net.Proxy;
@@ -42,7 +47,8 @@ public class GeoApiContext {
   private UrlSigner urlSigner;
   private String channel;
   private RequestHandler requestHandler;
-
+  private Integer maxRetries;
+  private ExceptionsAllowedToRetry exceptionsAllowedToRetry = new ExceptionsAllowedToRetry();
 
   /**
    * RequestHandler is the service provider interface that enables requests to be handled via
@@ -53,7 +59,17 @@ public class GeoApiContext {
    * @see GaeRequestHandler
    */
   public interface RequestHandler {
-    <T, R extends ApiResponse<T>> PendingResult<T> handle(String hostName, String url, String userAgent, Class<R> clazz, FieldNamingPolicy fieldNamingPolicy, long errorTimeout);
+    <T, R extends ApiResponse<T>> PendingResult<T> handle(String hostName, String url, String userAgent, Class<R> clazz,
+                                                          FieldNamingPolicy fieldNamingPolicy, long errorTimeout,
+                                                          Integer maxRetries,
+                                                          ExceptionsAllowedToRetry exceptionsAllowedToRetry);
+
+    <T, R extends ApiResponse<T>> PendingResult<T> handlePost(String hostName, String url, String payload,
+                                                              String userAgent, Class<R> clazz,
+                                                              FieldNamingPolicy fieldNamingPolicy, long errorTimeout,
+                                                              Integer maxRetries,
+                                                              ExceptionsAllowedToRetry exceptionsAllowedToRetry);
+
     void setConnectTimeout(long timeout, TimeUnit unit);
     void setReadTimeout(long timeout, TimeUnit unit);
     void setWriteTimeout(long timeout, TimeUnit unit);
@@ -82,6 +98,7 @@ public class GeoApiContext {
    */
   public GeoApiContext(RequestHandler requestHandler) {
     this.requestHandler = requestHandler;
+    this.exceptionsAllowedToRetry.add(OverQueryLimitException.class);
   }
 
   <T, R extends ApiResponse<T>> PendingResult<T> get(ApiConfig config, Class<? extends R> clazz,
@@ -138,6 +155,46 @@ public class GeoApiContext {
         config.supportsClientId, query.toString());
   }
 
+  <T, R extends ApiResponse<T>> PendingResult<T> post(ApiConfig config,
+      Class<? extends R> clazz,
+      Map<String, String> params) {
+
+    checkContext(config.supportsClientId);
+
+    StringBuilder url = new StringBuilder(config.path);
+    if (config.supportsClientId && clientId != null) {
+      url.append("?client=").append(clientId);
+    } else {
+      url.append("?key=").append(apiKey);
+    }
+
+    if (config.supportsClientId && clientId != null) {
+      try {
+        String signature = urlSigner.getSignature(url.toString());
+        url.append("&signature=").append(signature);
+      } catch (Exception e) {
+        return new ExceptionResult<T>(e);
+      }
+    }
+
+    String hostName = config.hostName;
+    if (baseUrlOverride != null) {
+      hostName = baseUrlOverride;
+    }
+
+    return requestHandler.handlePost(
+      hostName,
+      url.toString(),
+      params.get("_payload"),
+      USER_AGENT,
+      clazz,
+      config.fieldNamingPolicy,
+      errorTimeout,
+      maxRetries,
+      exceptionsAllowedToRetry
+    );
+  }
+
   private <T, R extends ApiResponse<T>> PendingResult<T> getWithPath(Class<R> clazz,
                                                                      FieldNamingPolicy fieldNamingPolicy, String hostName, String path,
                                                                      boolean canUseClientId, String encodedPath) {
@@ -167,7 +224,7 @@ public class GeoApiContext {
       hostName = baseUrlOverride;
     }
 
-    return requestHandler.handle(hostName, url.toString(), USER_AGENT, clazz, fieldNamingPolicy, errorTimeout);
+    return requestHandler.handle(hostName, url.toString(), USER_AGENT, clazz, fieldNamingPolicy, errorTimeout, maxRetries, exceptionsAllowedToRetry);
   }
 
   private void checkContext(boolean canUseClientId) {
@@ -246,9 +303,31 @@ public class GeoApiContext {
   /**
    * Sets the cumulative time limit for which retry-able errors will be retried. Defaults to 60
    * seconds. Set to zero to retry requests forever.
+   *
+   * <p>This operates separately from the count-based {@link #setMaxRetries(Integer)}.
    */
   public GeoApiContext setRetryTimeout(long timeout, TimeUnit unit) {
     this.errorTimeout = unit.toMillis(timeout);
+    return this;
+  }
+
+  /**
+   * Sets the maximum number of times each retry-able errors will be retried. Set this to null to not have a max number.
+   * Set this to zero to disable retries.
+   *
+   * <p>This operates separately from the time-based {@link #setRetryTimeout(long, TimeUnit)}.
+   */
+  public GeoApiContext setMaxRetries(Integer maxRetries) {
+    this.maxRetries = maxRetries;
+    return this;
+  }
+
+  /**
+   * Disable retries completely.
+   */
+  public GeoApiContext disableRetries() {
+    setMaxRetries(0);
+    setRetryTimeout(0, TimeUnit.MILLISECONDS);
     return this;
   }
 
@@ -272,6 +351,18 @@ public class GeoApiContext {
    */
   public GeoApiContext setQueryRateLimit(int maxQps, int minimumInterval) {
     requestHandler.setQueriesPerSecond(maxQps, minimumInterval);
+    return this;
+  }
+
+  /**
+   * Allows specific API exceptions to be retried or not retried.
+   */
+  public GeoApiContext toggleifExceptionIsAllowedToRetry(Class<? extends ApiException> exception, boolean allowedToRetry) {
+    if (allowedToRetry) {
+      exceptionsAllowedToRetry.add(exception);
+    } else {
+      exceptionsAllowedToRetry.remove(exception);
+    }
     return this;
   }
 

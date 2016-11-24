@@ -16,12 +16,14 @@
 package com.google.maps;
 
 import com.google.appengine.api.urlfetch.FetchOptions;
+import com.google.appengine.api.urlfetch.HTTPHeader;
 import com.google.appengine.api.urlfetch.HTTPMethod;
 import com.google.appengine.api.urlfetch.HTTPRequest;
 import com.google.appengine.api.urlfetch.URLFetchService;
 import com.google.appengine.api.urlfetch.URLFetchServiceFactory;
 import com.google.gson.FieldNamingPolicy;
 import com.google.maps.internal.ApiResponse;
+import com.google.maps.internal.ExceptionsAllowedToRetry;
 import com.google.maps.internal.GaePendingResult;
 
 import java.net.MalformedURLException;
@@ -41,7 +43,10 @@ public class GaeRequestHandler implements GeoApiContext.RequestHandler {
   private final URLFetchService client = URLFetchServiceFactory.getURLFetchService();
 
   @Override
-  public <T, R extends ApiResponse<T>> PendingResult<T> handle(String hostName, String url, String userAgent, Class<R> clazz, FieldNamingPolicy fieldNamingPolicy, long errorTimeout) {
+  public <T, R extends ApiResponse<T>> PendingResult<T> handle(String hostName, String url, String userAgent,
+                                                               Class<R> clazz, FieldNamingPolicy fieldNamingPolicy,
+                                                               long errorTimeout, Integer maxRetries,
+                                                               ExceptionsAllowedToRetry exceptionsAllowedToRetry) {
     FetchOptions fetchOptions = FetchOptions.Builder.withDeadline(10);
     HTTPRequest req = null;
     try {
@@ -51,8 +56,29 @@ public class GaeRequestHandler implements GeoApiContext.RequestHandler {
       throw(new RuntimeException(e));
     }
 
-    return new GaePendingResult<T, R>(req, client, clazz, fieldNamingPolicy, errorTimeout);
+    return new GaePendingResult<T, R>(req, client, clazz, fieldNamingPolicy, errorTimeout, maxRetries, exceptionsAllowedToRetry);
   }
+
+  @Override
+  public <T, R extends ApiResponse<T>> PendingResult<T> handlePost(String hostName, String url, String payload,
+                                                                   String userAgent, Class<R> clazz,
+                                                                   FieldNamingPolicy fieldNamingPolicy,
+                                                                   long errorTimeout, Integer maxRetries,
+                                                                   ExceptionsAllowedToRetry exceptionsAllowedToRetry) {
+    FetchOptions fetchOptions = FetchOptions.Builder.withDeadline(10);
+    HTTPRequest req = null;
+    try {
+      req = new HTTPRequest(new URL(hostName + url), HTTPMethod.POST, fetchOptions);
+      req.setHeader(new HTTPHeader("Content-Type", "application/json; charset=utf-8"));
+      req.setPayload(payload.getBytes());
+    } catch (MalformedURLException e) {
+      LOG.log(Level.SEVERE, String.format("Request: %s%s", hostName, url), e);
+      throw(new RuntimeException(e));
+    }
+
+    return new GaePendingResult<T, R>(req, client, clazz, fieldNamingPolicy, errorTimeout, maxRetries, exceptionsAllowedToRetry);
+  }
+
 
   @Override
   public void setConnectTimeout(long timeout, TimeUnit unit) {
