@@ -20,6 +20,7 @@ import com.google.maps.errors.NotFoundException;
 import com.google.maps.model.AddressType;
 import com.google.maps.model.DirectionsResult;
 import com.google.maps.model.GeocodedWaypointStatus;
+import com.google.maps.model.LatLng;
 import com.google.maps.model.TrafficModel;
 import com.google.maps.model.TransitMode;
 import com.google.maps.model.TransitRoutingPreference;
@@ -80,8 +81,8 @@ public class DirectionsApiTest extends AuthenticatedTest {
   public void testTravelModeRoundTrip() throws Exception {
     DirectionsResult result = DirectionsApi.newRequest(context)
         .mode(TravelMode.BICYCLING)
-        .origin("Town Hall, Sydney")
-        .destination("Parramatta, NSW").await();
+        .origin("483 George St, Sydney NSW 2000, Australia")
+        .destination("182 Church St, Parramatta NSW 2150, Australia").await();
 
     assertNotNull(result.routes);
     assertNotNull(result.routes[0]);
@@ -93,8 +94,8 @@ public class DirectionsApiTest extends AuthenticatedTest {
     DateTime now = new DateTime();
     DirectionsResult result = DirectionsApi.newRequest(context)
         .mode(TravelMode.TRANSIT)
-        .origin("Town Hall, Sydney")
-        .destination("Parramatta, NSW")
+        .origin("483 George St, Sydney NSW 2000, Australia")
+        .destination("182 Church St, Parramatta NSW 2150, Australia")
         .departureTime(now)
         .await();
 
@@ -157,7 +158,7 @@ public class DirectionsApiTest extends AuthenticatedTest {
   /**
    * Boston to Concord, via Charlestown and Lexington.
    *
-   * {@code http://maps.googleapis.com/maps/api/directions/json?origin=Boston,MA&destination=Concord,MA&waypoints=Charlestown,MA|Lexington,MA
+   * {@code http://maps.googleapis.com/maps/api/directions/json?origin=Boston,MA&destination=Concord,MA&waypoints=Charlestown,MA|Lexington,MA}
    */
   @Test
   public void testBostonToConcordViaCharlestownAndLexignton() throws Exception {
@@ -165,6 +166,22 @@ public class DirectionsApiTest extends AuthenticatedTest {
         .origin("Boston,MA")
         .destination("Concord,MA")
         .waypoints("Charlestown,MA", "Lexington,MA")
+        .await();
+
+    assertNotNull(result.routes);
+  }
+
+  /**
+   * Boston to Concord, via Charlestown and Lexington, but using exact latitude and longitude coordinates for the waypoints.
+   *
+   * {@code http://maps.googleapis.com/maps/api/directions/json?origin=Boston,MA&destination=Concord,MA&waypoints=42.379322,-71.063384|42.444303,-71.229087}
+   */
+  @Test
+  public void testBostonToConcordViaCharlestownAndLexigntonLatLng() throws Exception {
+    DirectionsResult result = DirectionsApi.newRequest(context)
+        .origin("Boston,MA")
+        .destination("Concord,MA")
+        .waypoints(new LatLng(42.379322, -71.063384), new LatLng(42.444303, -71.229087))
         .await();
 
     assertNotNull(result.routes);
@@ -286,7 +303,7 @@ public class DirectionsApiTest extends AuthenticatedTest {
     assertNotNull(result.geocodedWaypoints);
     assertEquals(2, result.geocodedWaypoints.length);
     assertEquals(GeocodedWaypointStatus.OK, result.geocodedWaypoints[0].geocoderStatus);
-    assertEquals(AddressType.STREET_ADDRESS, result.geocodedWaypoints[0].types[0]);
+    assertEquals(AddressType.PREMISE, result.geocodedWaypoints[0].types[0]);
     assertEquals(GeocodedWaypointStatus.OK, result.geocodedWaypoints[1].geocoderStatus);
     assertEquals(AddressType.ROUTE, result.geocodedWaypoints[1].types[0]);
 

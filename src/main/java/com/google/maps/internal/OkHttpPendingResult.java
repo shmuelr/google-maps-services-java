@@ -19,9 +19,11 @@ import com.google.gson.FieldNamingPolicy;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonSyntaxException;
+import com.google.maps.GeolocationApi;
 import com.google.maps.PendingResult;
 import com.google.maps.PhotoRequest;
 import com.google.maps.errors.ApiException;
+import com.google.maps.errors.OverDailyLimitException;
 import com.google.maps.errors.OverQueryLimitException;
 import com.google.maps.model.AddressComponentType;
 import com.google.maps.model.AddressType;
@@ -46,13 +48,12 @@ import org.joda.time.DateTime;
 import org.joda.time.Instant;
 import org.joda.time.LocalTime;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -68,12 +69,14 @@ public class OkHttpPendingResult<T, R extends ApiResponse<T>>
   private final OkHttpClient client;
   private final Class<R> responseClass;
   private final FieldNamingPolicy fieldNamingPolicy;
+  private final Integer maxRetries;
 
   private Call call;
   private Callback<T> callback;
   private long errorTimeOut;
   private int retryCounter = 0;
   private long cumulativeSleepTime = 0;
+  private ExceptionsAllowedToRetry exceptionsAllowedToRetry;
 
   private static final Logger LOG = Logger.getLogger(OkHttpPendingResult.class.getName());
   private static final List<Integer> RETRY_ERROR_CODES = Arrays.asList(500, 503, 504);
@@ -84,14 +87,19 @@ public class OkHttpPendingResult<T, R extends ApiResponse<T>>
    * @param responseClass     Model class to unmarshal JSON body content.
    * @param fieldNamingPolicy FieldNamingPolicy for unmarshaling JSON.
    * @param errorTimeOut      Number of milliseconds to re-send erroring requests.
+   * @param maxRetries        Number of times allowed to re-send erroring requests.
+   * @param exceptionsAllowedToRetry The exceptions to retry.
    */
   public OkHttpPendingResult(Request request, OkHttpClient client, Class<R> responseClass,
-                             FieldNamingPolicy fieldNamingPolicy, long errorTimeOut) {
+                             FieldNamingPolicy fieldNamingPolicy, long errorTimeOut, Integer maxRetries,
+                             ExceptionsAllowedToRetry exceptionsAllowedToRetry) {
     this.request = request;
     this.client = client;
     this.responseClass = responseClass;
     this.fieldNamingPolicy = fieldNamingPolicy;
     this.errorTimeOut = errorTimeOut;
+    this.maxRetries = maxRetries;
+    this.exceptionsAllowedToRetry = exceptionsAllowedToRetry;
 
     this.call = client.newCall(request);
   }
@@ -205,13 +213,13 @@ public class OkHttpPendingResult<T, R extends ApiResponse<T>>
 
   @SuppressWarnings("unchecked")
   private T parseResponse(OkHttpPendingResult<T, R> request, Response response) throws Exception {
-    if (RETRY_ERROR_CODES.contains(response.code()) && cumulativeSleepTime < errorTimeOut) {
+    if (shouldRetry(response)) {
       // Retry is a blocking method, but that's OK. If we're here, we're either in an await()
       // call, which is blocking anyway, or we're handling a callback in a separate thread.
       return request.retry();
     }
 
-    byte[] bytes = getBytes(response);
+    byte[] bytes = response.body().bytes();
     R resp;
     String contentType = response.header("Content-Type");
 
@@ -243,6 +251,7 @@ public class OkHttpPendingResult<T, R extends ApiResponse<T>>
         .registerTypeAdapter(PriceLevel.class, new PriceLevelAdaptor())
         .registerTypeAdapter(Instant.class, new InstantAdapter())
         .registerTypeAdapter(LocalTime.class, new LocalTimeAdapter())
+        .registerTypeAdapter(GeolocationApi.Response.class, new GeolocationResponseAdapter())
         .setFieldNamingPolicy(fieldNamingPolicy)
         .create();
 
@@ -269,26 +278,12 @@ public class OkHttpPendingResult<T, R extends ApiResponse<T>>
       return resp.getResult();
     } else {
       ApiException e = resp.getError();
-      if (e instanceof OverQueryLimitException && cumulativeSleepTime < errorTimeOut) {
-        // Retry over_query_limit errors
+      if (shouldRetry(e)) {
         return request.retry();
       } else {
-        // Throw anything else, including OQLs if we've spent too much time retrying
         throw e;
       }
     }
-  }
-
-  private byte[] getBytes(Response response) throws IOException {
-    InputStream in = response.body().byteStream();
-    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-    int bytesRead;
-    byte[] data = new byte[8192];
-    while ((bytesRead = in.read(data, 0, data.length)) != -1) {
-      buffer.write(data, 0, bytesRead);
-    }
-    buffer.flush();
-    return buffer.toByteArray();
   }
 
   private T retry() throws Exception {
@@ -296,5 +291,17 @@ public class OkHttpPendingResult<T, R extends ApiResponse<T>>
     LOG.info("Retrying request. Retry #" + retryCounter);
     this.call = client.newCall(request);
     return this.await();
+  }
+
+  private boolean shouldRetry(Response response) {
+    return RETRY_ERROR_CODES.contains(response.code())
+        && cumulativeSleepTime < errorTimeOut
+        && (maxRetries == null || retryCounter < maxRetries);
+  }
+
+  private boolean shouldRetry(ApiException exception) {
+    return exceptionsAllowedToRetry.contains(exception.getClass())
+        && cumulativeSleepTime < errorTimeOut
+        && (maxRetries == null || retryCounter < maxRetries);
   }
 }

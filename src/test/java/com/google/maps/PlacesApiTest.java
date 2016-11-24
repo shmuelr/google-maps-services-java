@@ -49,10 +49,10 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.InputStream;
 import java.net.URI;
 import java.util.List;
-import java.util.Scanner;
+
+import static com.google.maps.TestUtils.retrieveBody;
 
 public class PlacesApiTest {
 
@@ -79,16 +79,6 @@ public class PlacesApiTest {
     queryAutocompleteWithPlaceIdResponseBody = retrieveBody("QueryAutocompleteResponseWithPlaceID.json");
     textSearchResponseBody = retrieveBody("TextSearchResponse.json");
     textSearchPizzaInNYCbody = retrieveBody("TextSearchPizzaInNYC.json");
-  }
-
-  private String retrieveBody(String filename) {
-    InputStream input = this.getClass().getResourceAsStream(filename);
-    Scanner s = new java.util.Scanner(input).useDelimiter("\\A");
-    String body = s.next();
-    if (body == null || body.length() == 0) {
-      throw new IllegalArgumentException("filename '" + filename + "' resulted in null or empty body");
-    }
-    return body;
   }
 
   private MockWebServer server;
@@ -590,6 +580,25 @@ public class PlacesApiTest {
     assertParamValue("true", "opennow", actualParams);
     assertParamValue(PlaceType.AIRPORT.toString(), "type", actualParams);
     assertParamValue("next-page-token", "pagetoken", actualParams);
+  }
+
+  @Test
+  public void testNearbySearchRequestWithMultipleType() throws Exception {
+    MockResponse response = new MockResponse();
+    response.setBody("");
+    server.enqueue(response);
+    server.play();
+    context.setBaseUrlForTesting("http://127.0.0.1:" + server.getPort());
+
+    LatLng location = new LatLng(10, 20);
+    PlacesApi.nearbySearchQuery(context, location)
+            .type(PlaceType.AIRPORT, PlaceType.BANK)
+            .awaitIgnoreError();
+
+    List<NameValuePair> actualParams =
+            parseQueryParamsFromRequestLine(server.takeRequest().getRequestLine());
+    assertParamValue(location.toUrlValue(), "location", actualParams);
+    assertParamValue(PlaceType.AIRPORT.toString()+"|"+PlaceType.BANK.toString(), "type", actualParams);
   }
 
   @Test(expected = IllegalArgumentException.class)
