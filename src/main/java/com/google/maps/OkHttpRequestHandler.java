@@ -17,11 +17,10 @@ package com.google.maps;
 
 import com.google.gson.FieldNamingPolicy;
 import com.google.maps.internal.ApiResponse;
+import com.google.maps.internal.ExceptionsAllowedToRetry;
 import com.google.maps.internal.OkHttpPendingResult;
 import com.google.maps.internal.RateLimitExecutorService;
-import com.squareup.okhttp.Dispatcher;
-import com.squareup.okhttp.OkHttpClient;
-import com.squareup.okhttp.Request;
+import okhttp3.*;
 
 import java.net.Proxy;
 import java.util.concurrent.TimeUnit;
